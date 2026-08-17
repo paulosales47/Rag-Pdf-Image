@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# dados locais (não versionar conteúdo real)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/vectorstore/*
+!data/vectorstore/.gitkeep
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Streamlit
+.streamlit/
+
+# SO / editores
+.DS_Store
+.vscode/
+.idea/
