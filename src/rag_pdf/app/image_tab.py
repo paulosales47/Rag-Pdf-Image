@@ -5,11 +5,16 @@ import streamlit as st
 from rag_pdf.app.ui_helpers import confirm_icon_action
 from rag_pdf.config import settings
 from rag_pdf.pipeline.image_ingest_pipeline import run_ingest_image
-from rag_pdf.pipeline.image_query_pipeline import run_image_similarity_query, run_image_text_query
+from rag_pdf.pipeline.image_query_pipeline import (
+    run_image_siglip_text_query,
+    run_image_similarity_query,
+    run_image_text_query,
+)
 from rag_pdf.vectorstore.chroma_image_store import ImageVectorStore
 
 TEXT_SEARCH = "Por texto"
 IMAGE_SEARCH = "Por imagem parecida"
+SIGLIP_TEXT_SEARCH = "Por texto (nativo do SigLIP)"
 
 
 @st.cache_resource
@@ -79,7 +84,12 @@ def render_result(result) -> None:
 
 def render_search_section() -> None:
     st.subheader("Buscar imagens")
-    mode = st.radio("Buscar", [TEXT_SEARCH, IMAGE_SEARCH], horizontal=True, key="image_search_mode")
+    mode = st.radio(
+        "Buscar",
+        [TEXT_SEARCH, SIGLIP_TEXT_SEARCH, IMAGE_SEARCH],
+        horizontal=True,
+        key="image_search_mode",
+    )
 
     if mode == TEXT_SEARCH:
         query = st.text_input("Descreva o que você procura", key="image_text_query")
@@ -87,6 +97,27 @@ def render_search_section() -> None:
             with st.spinner("Buscando..."):
                 try:
                     results = run_image_text_query(query)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Erro na busca: {exc}")
+                    return
+            if not results:
+                st.caption("Nenhuma imagem indexada ainda.")
+            for result in results:
+                render_result(result)
+    elif mode == SIGLIP_TEXT_SEARCH:
+        st.caption(
+            "Compara o texto direto com o embedding visual (SigLIP), sem passar pela "
+            "descrição do modelo de visão — bom pra palavras/frases curtas. As distâncias "
+            "aqui tendem a ficar mais altas que no modo 'Por texto' (é uma característica "
+            "do SigLIP, não indica busca pior); o que importa é a ordem dos resultados."
+        )
+        query = st.text_input(
+            "O que você procura (palavra ou frase curta)", key="image_siglip_text_query"
+        )
+        if st.button("Buscar", key="image_siglip_text_search_btn") and query:
+            with st.spinner("Buscando..."):
+                try:
+                    results = run_image_siglip_text_query(query)
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Erro na busca: {exc}")
                     return

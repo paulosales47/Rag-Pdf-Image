@@ -126,8 +126,15 @@ Abre em `http://localhost:8501`, com:
   visão no LM Studio gera uma descrição textual completa, que é embutida com o mesmo
   EmbeddingGemma dos PDFs (768d); a imagem em si é embutida com SigLIP via CrispEmbed (1152d).
   Os dois embeddings, a descrição e o caminho da imagem são salvos no vector store.
-- **Buscar imagens**: seletor com dois modos —
-  - **Por texto**: descreve o que procura, compara com os embeddings de descrição.
+- **Buscar imagens**: seletor com três modos —
+  - **Por texto**: descreve o que procura, compara com os embeddings de descrição (Gemma) —
+    bom para frases mais longas e detalhadas.
+  - **Por texto (nativo do SigLIP)**: embute o texto direto com a torre de texto do SigLIP
+    (via CrispEmbed, `--clip-text`) e compara com os embeddings visuais — sem passar pelo
+    modelo de visão do LM Studio, bom para palavras/frases curtas. As distâncias tendem a
+    ficar mais altas (é característica do SigLIP, não indica busca pior) — o que importa é a
+    ordem dos resultados. Precisa do `.gguf` da torre de texto (ver
+    [embedding_image_server/README.md](embedding_image_server/README.md)).
   - **Por imagem parecida**: sobe uma imagem de exemplo, compara com os embeddings visuais
     (SigLIP) das imagens já indexadas — útil quando é mais fácil mostrar do que descrever.
 - **Galeria**: miniaturas de todas as imagens indexadas, com exclusão individual.

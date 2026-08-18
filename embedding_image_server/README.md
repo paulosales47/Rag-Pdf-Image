@@ -42,12 +42,40 @@ desta sessão pro CUDA Toolkit se necessário — só precisa que as três ferra
 o CMake sempre produza o binário no mesmo caminho relativo em toda versão do CrispEmbed) e o
 mantém rodando em primeiro plano — feche a janela ou `Ctrl+C` pra parar.
 
-## Baixando o modelo SigLIP
+## Baixando o modelo SigLIP (torre de visão)
 
 Baixe `siglip-so400m-patch14-384.gguf` do repositório
 [`cstr/siglip-so400m-patch14-384-GGUF`](https://huggingface.co/cstr/siglip-so400m-patch14-384-GGUF)
 no Hugging Face e salve em `models\siglip-so400m-patch14-384.gguf` (pasta na raiz do projeto,
 irmã de `src/` — não dentro de `embedding_image_server/`).
+
+## Gerando o modelo de texto (opcional — busca por texto nativa do SigLIP)
+
+O `.gguf` acima só tem a torre de **visão** — o SigLIP original também tem uma torre de
+**texto**, que não vem pronta em nenhum repositório GGUF conhecido. Pra habilitar o terceiro
+modo de busca da aba de Imagens ("Por texto (nativo do SigLIP)"), gere localmente a partir do
+checkpoint original no Hugging Face
+([`google/siglip-so400m-patch14-384`](https://huggingface.co/google/siglip-so400m-patch14-384)):
+
+```powershell
+# Dependências pra rodar o conversor (só precisa uma vez; baixa ~200MB de torch CPU-only)
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install transformers gguf sentencepiece
+
+# Gera o .gguf de texto (baixa o checkpoint original do HF, alguns GB, na primeira vez)
+.\.venv\Scripts\python.exe embedding_image_server\CrispEmbed\models\convert-clip-text-to-gguf.py `
+    --model google/siglip-so400m-patch14-384 `
+    --output models\siglip-so400m-patch14-384-text.gguf
+```
+
+`start-server.ps1` já detecta esse arquivo automaticamente (se existir em `models/`) e carrega
+os dois modelos juntos (`--vit` + `--clip-text`), habilitando `POST /clip/text` ao lado de
+`POST /vit/encode`. Sem o arquivo, o servidor sobe normalmente só com a busca por imagem.
+
+> Se a conversão falhar com erro de SSL (`CERTIFICATE_VERIFY_FAILED`) tentando conectar no
+> Hugging Face, é sintoma comum de antivírus fazendo inspeção de HTTPS com certificado próprio
+> — rode `pip install pip-system-certs` no venv (usa o repositório de certificados do Windows
+> em vez do bundle padrão do Python) e tente de novo.
 
 ## Documentação adicional
 
@@ -80,3 +108,11 @@ em outra máquina/versão:
   `bin\x64\`, não direto em `bin\` como em versões mais antigas — sem isso no `PATH`, o
   executável falha instantaneamente e sem mensagem nenhuma (`STATUS_DLL_NOT_FOUND`). Os dois
   scripts já incluem essa subpasta.
+- **Busca por texto nativa do SigLIP** (`--clip-text`, `POST /clip/text`) também validada: uma
+  imagem de moto indexada ficou em 1º lugar buscando por `"moto"` e por
+  `"uma foto de uma motocicleta"`, à frente de outras 3 imagens não relacionadas — confirma que
+  a torre de texto convertida (`convert-clip-text-to-gguf.py`) cai no mesmo espaço vetorial da
+  torre de visão. As distâncias de cosseno ficam compactadas perto de 1.0 (bem diferentes dos
+  valores da busca via descrição do modelo de visão) — característica do SigLIP (perda sigmoid,
+  sem a escala/bias aprendidos aplicados aqui), não indica busca ruim; o que importa é a ordem
+  relativa dos resultados.

@@ -310,16 +310,27 @@ gerar a descrição, `image_embedder` pra gerar o embedding visual, `processing/
 
 ### `pipeline/image_query_pipeline.py`
 
-**O que faz:** expõe dois modos de busca, escolhidos pelo usuário na interface:
+**O que faz:** expõe três modos de busca, escolhidos pelo usuário na interface:
 
 - **`run_image_text_query()`** — busca por texto: embute a pergunta com o Gemma (mesmo
   `embed_query` usado nos PDFs) e compara com os embeddings de descrição.
+- **`run_image_siglip_text_query()`** — busca por texto nativa do SigLIP: embute o texto com a
+  **torre de texto** do próprio SigLIP (`processing/image_embedder.py::embed_text_siglip()`,
+  via CrispEmbed `POST /clip/text`) e compara **direto** com os embeddings visuais — sem passar
+  pela descrição do modelo de visão. Precisa de um `.gguf` separado da torre de texto (gerado
+  com o conversor do próprio CrispEmbed a partir do checkpoint original no Hugging Face — veja
+  [embedding_image_server/README.md](../embedding_image_server/README.md)), carregado junto do
+  servidor via `--clip-text`. As distâncias ficam mais compactadas (perto de 1.0) que nos outros
+  modos — característica de como o SigLIP foi treinado (perda sigmoid com escala/bias
+  aprendidos, não aplicados aqui), não indica busca pior; o que importa é a ordem relativa.
 - **`run_image_similarity_query()`** — busca por imagem parecida: embute uma imagem de exemplo
   com o SigLIP e compara com os embeddings visuais das imagens já indexadas.
 
 > **Analogia:** é pedir ao bibliotecário "me traga fotos parecidas com essa descrição" (busca
-> por texto) ou "me traga fotos parecidas com essa aqui que eu tenho na mão" (busca por
-> imagem) — dois jeitos diferentes de perguntar a mesma coisa, cada um melhor numa situação.
+> por texto via Gemma), "me traga fotos que combinam com essa palavra" (busca nativa do
+> SigLIP — mais direta, menos "conversada") ou "me traga fotos parecidas com essa aqui que eu
+> tenho na mão" (busca por imagem) — três jeitos diferentes de perguntar coisas parecidas, cada
+> um melhor numa situação.
 
 ## 5. Interfaces
 

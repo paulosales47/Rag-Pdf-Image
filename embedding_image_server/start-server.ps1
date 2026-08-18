@@ -5,12 +5,16 @@
 
 .DESCRIPTION
     Roda em primeiro plano — feche a janela ou Ctrl+C pra parar. Requer ter rodado
-    setup.ps1 antes (gera o executável) e ter o .gguf em models\.
+    setup.ps1 antes (gera o executável) e ter o .gguf de visão em models\. Se o .gguf da
+    torre de texto (gerado com models/convert-clip-text-to-gguf.py do CrispEmbed) também
+    existir em models\, ele é carregado junto, habilitando POST /clip/text (busca
+    texto↔imagem nativa do SigLIP, sem passar pelo modelo de visão do LM Studio).
 #>
 
 param(
     [int]$Port = 8081,
-    [string]$ModelPath = (Join-Path $PSScriptRoot "..\models\siglip-so400m-patch14-384.gguf")
+    [string]$ModelPath = (Join-Path $PSScriptRoot "..\models\siglip-so400m-patch14-384.gguf"),
+    [string]$TextModelPath = (Join-Path $PSScriptRoot "..\models\siglip-so400m-patch14-384-text.gguf")
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,13 +67,27 @@ if (-not (Test-Path $resolvedModelPath)) {
     exit 1
 }
 
+$resolvedTextModelPath = [System.IO.Path]::GetFullPath($TextModelPath)
+$hasTextModel = Test-Path $resolvedTextModelPath
+
 Write-Host "== Subindo crispembed-server ==" -ForegroundColor Cyan
-Write-Host "Executável: $($exe.FullName)"
-Write-Host "Modelo:     $resolvedModelPath"
-Write-Host "Porta:      $Port"
+Write-Host "Executável:        $($exe.FullName)"
+Write-Host "Modelo (visão):    $resolvedModelPath"
+if ($hasTextModel) {
+    Write-Host "Modelo (texto):    $resolvedTextModelPath"
+} else {
+    Write-Host "Modelo (texto):    não encontrado, POST /clip/text ficará indisponível" -ForegroundColor Yellow
+    Write-Host "  Gere com: python embedding_image_server\CrispEmbed\models\convert-clip-text-to-gguf.py --model google/siglip-so400m-patch14-384 --output models\siglip-so400m-patch14-384-text.gguf"
+}
+Write-Host "Porta:             $Port"
 Write-Host ""
 
 # SigLIP/CLIP é um modelo "ViT standalone" no CrispEmbed — precisa entrar via --vit
 # (endpoint POST /vit/encode), não via -m (que carrega um modelo de texto/BERT e falha
-# com "missing token_embd.weight" para um encoder de imagem puro).
-& $exe.FullName --vit $resolvedModelPath --port $Port
+# com "missing token_embd.weight" para um encoder de imagem puro). A torre de texto do
+# SigLIP entra separada, via --clip-text, habilitando POST /clip/text.
+if ($hasTextModel) {
+    & $exe.FullName --vit $resolvedModelPath --clip-text $resolvedTextModelPath --port $Port
+} else {
+    & $exe.FullName --vit $resolvedModelPath --port $Port
+}

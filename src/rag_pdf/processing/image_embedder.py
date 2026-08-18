@@ -23,3 +23,17 @@ def embed_image(image_path: Path) -> list[float]:
     response = _get_client().post("/vit/encode", json={"image": str(image_path.resolve())})
     response.raise_for_status()
     return response.json()["embedding"]
+
+
+def embed_text_siglip(text: str) -> list[float]:
+    """Gera o embedding de texto (SigLIP, 1152d) via CrispEmbed, no mesmo espaço
+    vetorial do embedding visual — permite comparar texto direto com imagem, sem
+    passar pela descrição do modelo de visão.
+
+    Requer o servidor iniciado com --clip-text (não só --vit) — ver
+    embedding_image_server/start-server.ps1. Formato confirmado lendo
+    examples/server/server.cpp do CrispEmbed: {"embedding": [...], "dim": N}.
+    """
+    response = _get_client().post("/clip/text", json={"text": text})
+    response.raise_for_status()
+    return response.json()["embedding"]
