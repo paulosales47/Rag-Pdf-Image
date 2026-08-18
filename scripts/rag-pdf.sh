@@ -9,7 +9,9 @@ cd "$PROJECT_ROOT"
 VENV_DIR="$PROJECT_ROOT/.venv"
 APP_PATH="src/rag_pdf/app/streamlit_app.py"
 LOG_FILE="/tmp/rag-pdf-local-streamlit.log"
+PID_FILE="/tmp/rag-pdf-local-streamlit.pid"
 LM_STUDIO_URL="http://localhost:1234/v1/models"
+CRISPEMBED_URL="http://localhost:8081/health"
 
 activate_venv() {
     if [ ! -d "$VENV_DIR" ]; then
@@ -17,8 +19,17 @@ activate_venv() {
         echo "Rode primeiro: python -m venv .venv && source .venv/bin/activate && make install"
         exit 1
     fi
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
+    # Linux/macOS: .venv/bin/activate — Windows (python -m venv nativo): .venv/Scripts/activate
+    if [ -f "$VENV_DIR/bin/activate" ]; then
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+    elif [ -f "$VENV_DIR/Scripts/activate" ]; then
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/Scripts/activate"
+    else
+        echo "Não achei bin/activate nem Scripts/activate dentro de $VENV_DIR"
+        exit 1
+    fi
 }
 
 check_lm_studio() {
@@ -30,8 +41,19 @@ check_lm_studio() {
     fi
 }
 
+check_crispembed() {
+    if curl -s -o /dev/null -w "%{http_code}" "$CRISPEMBED_URL" 2>/dev/null | grep -q "200"; then
+        echo "✓ CrispEmbed respondendo em $CRISPEMBED_URL"
+    else
+        echo "⚠ CrispEmbed não respondeu em $CRISPEMBED_URL (só necessário pra aba de Imagens)"
+        echo "  Suba com: embedding_image_server\\start-server.ps1 (ou crispembed-server --vit siglip-so400m-patch14-384.gguf --port 8081)"
+    fi
+}
+
+# pgrep/pkill não vêm com o Git for Windows (só com MSYS2 completo), então rastreamos o
+# processo por PID salvo em arquivo em vez de casar pela linha de comando.
 is_running() {
-    pgrep -f "streamlit run $APP_PATH" > /dev/null 2>&1
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
 }
 
 cmd_start() {
@@ -41,8 +63,10 @@ cmd_start() {
     fi
     activate_venv
     check_lm_studio
+    check_crispembed
     echo "Subindo a interface web..."
     nohup streamlit run "$APP_PATH" --server.headless true > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
     disown
     sleep 3
     if is_running; then
@@ -50,6 +74,7 @@ cmd_start() {
     else
         echo "✗ Falha ao subir. Confira o log:"
         tail -n 20 "$LOG_FILE" || true
+        rm -f "$PID_FILE"
         exit 1
     fi
 }
@@ -57,17 +82,21 @@ cmd_start() {
 cmd_stop() {
     if ! is_running; then
         echo "Não estava rodando."
+        rm -f "$PID_FILE"
         return
     fi
-    pkill -f "streamlit run $APP_PATH" 2>/dev/null || true
+    local pid
+    pid="$(cat "$PID_FILE")"
+    kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 10); do
         is_running || break
         sleep 0.3
     done
     if is_running; then
-        pkill -9 -f "streamlit run $APP_PATH" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
         sleep 0.5
     fi
+    rm -f "$PID_FILE"
     echo "✓ Aplicação parada."
 }
 
@@ -84,8 +113,9 @@ cmd_status() {
         echo "✗ Interface web parada"
     fi
     check_lm_studio
+    check_crispembed
     activate_venv
-    python3 - <<'EOF'
+    python - <<'EOF'
 from rag_pdf.vectorstore.chroma_store import ChromaVectorStore
 
 try:

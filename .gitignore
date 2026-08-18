@@ -12,6 +12,13 @@ data/processed/*
 data/vectorstore/*
 !data/vectorstore/.gitkeep
 
+# modelos GGUF baixados manualmente (grandes, não versionar)
+models/*
+!models/.gitkeep
+
+# CrispEmbed é clonado/buildado localmente por embedding_image_server/setup.ps1
+embedding_image_server/CrispEmbed/
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

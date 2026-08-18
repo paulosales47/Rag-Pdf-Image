@@ -1,14 +1,7 @@
-import re
-
 from openai import OpenAI
 
 from rag_pdf.config import settings
-
-# Alguns modelos "thinking" vazam o raciocínio interno dentro do próprio
-# `content` (em vez de `reasoning_content`) quando a extração de raciocínio
-# está desativada no LM Studio, separado da resposta final por um marcador
-# de canal (ex.: "<channel|>"). Descartamos tudo antes do último marcador.
-_CHANNEL_MARKER_RE = re.compile(r"<\|?channel\|?>", re.IGNORECASE)
+from rag_pdf.llm.response_utils import raise_if_truncated_by_reasoning, strip_leaked_reasoning
 
 
 class LMStudioClient:
@@ -37,14 +30,5 @@ class LMStudioClient:
         )
         choice = response.choices[0]
         content = choice.message.content or ""
-        if not content.strip() and choice.finish_reason == "length":
-            raise RuntimeError(
-                "O modelo esgotou o limite de tokens raciocinando (finish_reason=length) "
-                "antes de gerar a resposta. Aumente LLM_MAX_TOKENS no .env."
-            )
-
-        parts = _CHANNEL_MARKER_RE.split(content)
-        if len(parts) > 1:
-            content = parts[-1]
-
-        return content.strip()
+        raise_if_truncated_by_reasoning(content, choice.finish_reason, "LLM_MAX_TOKENS")
+        return strip_leaked_reasoning(content).strip()

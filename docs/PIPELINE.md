@@ -7,7 +7,10 @@ pedir ajuda ao bibliotecário para responder uma pergunta específica; o resumo 
 ler o livro inteiro e te contar do que se trata.
 
 Há duas pipelines principais — **ingestão** (indexar um PDF) e **consulta/resumo** (responder
-perguntas sobre o que foi indexado) — mais uma terceira, menor, de **resumo map-reduce**.
+perguntas sobre o que foi indexado) — mais uma terceira, menor, de **resumo map-reduce**, e uma
+quarta pipeline paralela, para **imagens** (seção 4), que segue a mesma lógica geral mas com um
+bibliotecário diferente para cada sentido: um que "olha" a imagem e escreve o que viu, e outro
+que tira a impressão digital dessa descrição.
 
 ```
                  ┌─────────────────────────── INGESTÃO ───────────────────────────┐
@@ -241,7 +244,84 @@ pro reduce (consolidar vários resumos parciais em um só).
 
 ---
 
-## 4. Interfaces
+## 4. Imagens (busca multimodal)
+
+Pipeline paralela à de PDF, pensada para indexar e buscar imagens. A diferença central: em vez
+de extrair texto de um documento, um modelo com **visão** "olha" a imagem e escreve uma
+descrição — e é essa descrição, mais o embedding visual da imagem em si, que viram as
+"impressões digitais" guardadas no fichário.
+
+```
+                 ┌──────────────────── INGESTÃO DE IMAGEM ────────────────────┐
+   Imagem ────▶  vision_client   ──▶  image_embedder  ──▶  embedder (texto) ──▶  chroma_image_store
+                 (descreve a           (SigLIP via            (Gemma sobre a       (2 coleções:
+                 imagem em texto,      CrispEmbed/CUDA)        descrição, 768d)     visual 1152d +
+                 via LM Studio)                                                    texto 768d)
+
+                 ┌──────────────────────── BUSCA DE IMAGEM ────────────────────────┐
+Texto ou imagem ─▶  embedder (texto) ou image_embedder (imagem)  ──▶  chroma_image_store.query
+                    (impressão digital da busca)                      (na coleção correspondente)
+```
+
+### `llm/vision_client.py`
+
+**O que faz:** envia a imagem (como base64, no formato `image_url` da API de chat compatível
+com OpenAI) para um modelo **com suporte a visão** carregado no LM Studio, junto de um prompt
+(`prompts/vision_prompt.py`) pedindo uma descrição completa e precisa — objetos, texto visível,
+cores, composição, contexto. Devolve o texto gerado.
+
+**Por que a descrição precisa ser completa:** é esse texto que alimenta a busca por palavra-chave
+depois (via embedding de texto) — uma descrição vaga ("uma foto") não ajuda ninguém a encontrar
+a imagem de novo; uma descrição detalhada sim.
+
+**Analogia:** é o funcionário da biblioteca que olha para uma foto e dita, em voz alta, tudo que
+vê nela, para outro funcionário catalogar depois.
+
+### `processing/image_embedder.py`
+
+**O que faz:** gera o embedding **visual** da imagem (1152 dimensões) usando o modelo **SigLIP**
+em formato GGUF (`siglip-so400m-patch14-384`). Como o LM Studio ainda não suporta esse modelo,
+ele roda **localmente via CUDA** através do [CrispEmbed](https://github.com/CrispStrobe/CrispEmbed)
+— um runtime local, com build CUDA, exposto como servidor HTTP (mesmo padrão do LM Studio: um
+processo local, um cliente HTTP fino conversando com ele).
+
+**Analogia:** é uma segunda impressão digital, tirada não do que foi *dito* sobre a imagem, mas
+da imagem *em si* — captura semelhanças visuais (cores, formas, composição) que uma descrição em
+palavras poderia não capturar.
+
+### `vectorstore/chroma_image_store.py`
+
+**O que faz:** guarda cada imagem em **duas coleções Chroma** — uma para o embedding visual
+(SigLIP, 1152d) e outra para o embedding da descrição (Gemma, 768d) — porque uma coleção Chroma
+só suporta uma dimensão de vetor por vez. As duas coleções compartilham o mesmo `id` (o nome do
+arquivo) e os mesmos metadados (caminho da imagem em disco, descrição, dimensões, pasta), então
+um resultado de qualquer uma das duas dá acesso à imagem completa.
+
+**Analogia:** é o mesmo fichário inteligente da seção 1, só que com duas gavetas paralelas para
+cada imagem — uma organizada por "o que ela parece", outra por "o que foi dito sobre ela" — e
+uma etiqueta comum ligando as duas gavetas.
+
+### `pipeline/image_ingest_pipeline.py`
+
+**O que faz:** orquestra a ingestão — lê dimensões/formato da imagem, chama `vision_client` pra
+gerar a descrição, `image_embedder` pra gerar o embedding visual, `processing/embedder.py`
+(o mesmo usado pelos PDFs) pra gerar o embedding da descrição, e salva tudo no
+`chroma_image_store`.
+
+### `pipeline/image_query_pipeline.py`
+
+**O que faz:** expõe dois modos de busca, escolhidos pelo usuário na interface:
+
+- **`run_image_text_query()`** — busca por texto: embute a pergunta com o Gemma (mesmo
+  `embed_query` usado nos PDFs) e compara com os embeddings de descrição.
+- **`run_image_similarity_query()`** — busca por imagem parecida: embute uma imagem de exemplo
+  com o SigLIP e compara com os embeddings visuais das imagens já indexadas.
+
+> **Analogia:** é pedir ao bibliotecário "me traga fotos parecidas com essa descrição" (busca
+> por texto) ou "me traga fotos parecidas com essa aqui que eu tenho na mão" (busca por
+> imagem) — dois jeitos diferentes de perguntar a mesma coisa, cada um melhor numa situação.
+
+## 5. Interfaces
 
 ### `cli/main.py`
 
@@ -251,16 +331,21 @@ pro reduce (consolidar vários resumos parciais em um só).
 - `rag-pdf summarize [--source <arquivo>]` → chama `summarize_pipeline.run_summarize`, com
   progresso impresso no terminal
 
-### `app/streamlit_app.py`
+### `app/streamlit_app.py` + `app/image_tab.py`
 
-**O que faz:** interface web (Streamlit) com:
-- **Barra lateral**: upload/indexação de PDF, contador de chunks no vector store, e o
-  seletor de **modo de resposta** (top-k fixo / busca adaptativa com os 3 perfis + manual /
-  resumo map-reduce)
-- **Chat**: histórico de perguntas e respostas, com as fontes usadas exibidas num expander
-  (arquivo, página, distância)
-- **Resumo**: quando o modo "Resumo" está ativo, qualquer mensagem enviada dispara o
-  map-reduce no documento selecionado, com barra de progresso e tempo estimado ao vivo
+**O que faz:** interface web (Streamlit) com duas abas:
+- **📄 PDFs** (todo o corpo original do app): **barra lateral** com upload/indexação de PDF,
+  contador de chunks no vector store, e o seletor de **modo de resposta** (top-k fixo / busca
+  adaptativa com os 3 perfis + manual / resumo map-reduce); **chat** com histórico de perguntas
+  e respostas, fontes exibidas num expander (arquivo, página, distância); **resumo** — quando
+  esse modo está ativo, qualquer mensagem enviada dispara o map-reduce no documento selecionado,
+  com barra de progresso e tempo estimado ao vivo.
+- **🖼️ Imagens** (`app/image_tab.py`, chamada de dentro da aba): upload de imagens com
+  indexação (mostra a descrição gerada), seletor de busca **por texto** ou **por imagem
+  parecida**, e uma galeria das imagens já indexadas com exclusão individual.
+
+`app/ui_helpers.py` guarda o `confirm_icon_action` (botão de exclusão com confirmação em duas
+etapas), reaproveitado pelas duas abas.
 
 ### `config.py`
 
@@ -284,3 +369,8 @@ com valores padrão sensatos que podem ser sobrescritos sem mexer em código.
 3. Você pede um resumo → `summarize_pipeline` busca o documento inteiro, ignorando a
    pergunta → resume em blocos (map) → consolida os resumos (reduce) → você recebe o resumo
    final, com barra de progresso ao longo do processo.
+4. Você sobe uma imagem → `vision_client` gera uma descrição via modelo de visão no LM Studio →
+   `image_embedder` gera o embedding visual (SigLIP, via CrispEmbed/CUDA) → `embedder` gera o
+   embedding da descrição (Gemma) → `chroma_image_store` guarda os dois. Depois, você busca por
+   texto (compara com o embedding da descrição) ou por imagem parecida (compara com o embedding
+   visual) → recebe as imagens mais parecidas, com a descrição gerada para cada uma.

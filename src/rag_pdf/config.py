@@ -30,5 +30,25 @@ class Settings(BaseSettings):
     # mais rápido, mas exigem um modelo com contexto suficiente no LM Studio.
     summarize_batch_chars: int = 24000
 
+    # --- Imagens (busca multimodal) ---
+    # Imagens originais salvas em disco (o caminho vai pros metadados, pra exibir depois).
+    images_raw_path: Path = Path("data/raw/images")
+
+    # Modelo com suporte a visão, carregado no LM Studio junto com o LLM de chat,
+    # usado só para gerar a descrição textual de cada imagem indexada.
+    lm_studio_vision_model: str = "gemma4-12b-qat-uncensored-hauhaucs-balanced"
+    # Modelos de visão "thinking" gastam parte desse orçamento raciocinando antes de
+    # escrever a descrição — por isso o padrão é mais folgado que um max_tokens comum.
+    vision_max_tokens: int = 4096
+
+    # CrispEmbed (github.com/CrispStrobe/CrispEmbed): runtime local com build CUDA,
+    # servindo o SigLIP GGUF via HTTP — o LM Studio ainda não suporta esse modelo.
+    crispembed_base_url: str = "http://localhost:8081"
+
+    # Coleções Chroma para imagens (dimensões diferentes exigem coleções separadas):
+    # embedding da imagem em si (SigLIP, 1152d) e embedding da descrição (Gemma, 768d).
+    image_vectorstore_collection_visual: str = "images_visual"
+    image_vectorstore_collection_text: str = "images_text"
+
 
 settings = Settings()
